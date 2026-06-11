@@ -7,6 +7,9 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_REPO="${SOURCE_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# STAGE_B_COMMIT позволяет продолжить уже начатый прогон на исходном commit,
+# даже если SOURCE_REPO получил новый commit только с исправлением audit-скриптов/patch-файлов.
+STAGE_B_COMMIT="${STAGE_B_COMMIT:-}"
 BASE_DIR="${BASE_DIR:-$HOME/ton-stage-b-local}"
 TARGET_DIR="${TARGET_DIR:-$BASE_DIR/ton-target-clean}"
 ATTACKER_DIR="${ATTACKER_DIR:-$BASE_DIR/ton-attacker}"
@@ -119,7 +122,11 @@ ensure_deps() {
 }
 
 source_commit() {
-  git -C "$SOURCE_REPO" rev-parse HEAD
+  if [[ -n "$STAGE_B_COMMIT" ]]; then
+    printf '%s\n' "$STAGE_B_COMMIT"
+  else
+    git -C "$SOURCE_REPO" rev-parse HEAD
+  fi
 }
 
 clone_or_update_clean_checkout() {
@@ -181,6 +188,11 @@ apply_attacker_patch() {
 apply_seed_patch() {
   local patch="$SOURCE_REPO/audit/stage_b_seed_tool.patch"
   if [[ -f "$SEED_DIR/validator/utils/seed-persistent-state-description.cpp" ]] && rg -q "seeded PersistentStateDescription" "$SEED_DIR/validator/utils/seed-persistent-state-description.cpp"; then
+    if rg -q "ton::create_serialize_tl_object|ton::create_hash_tl_object|ton::fetch_tl_object|namespace \{" "$SEED_DIR/validator/utils/seed-persistent-state-description.cpp"; then
+      echo "ОШИБКА: seed checkout содержит старую несовместимую версию seed-tool patch." >&2
+      echo "Сбросьте только seed checkout: git -C '$SEED_DIR' reset --hard '$COMMIT' && git -C '$SEED_DIR' clean -fd && rm -rf '$SEED_BUILD_DIR'" >&2
+      exit 2
+    fi
     log "Seed-tool patch уже применён"
     return
   fi
@@ -314,6 +326,9 @@ main() {
   log "BASE_DIR=$BASE_DIR"
   log "SOURCE_REPO=$SOURCE_REPO"
   log "COMMIT=$COMMIT"
+  if [[ -n "$STAGE_B_COMMIT" ]]; then
+    log "STAGE_B_COMMIT override включён; target/attacker/seed checkouts фиксируются на указанном commit"
+  fi
   log "TARGET_DIR=$TARGET_DIR"
   log "ATTACKER_DIR=$ATTACKER_DIR"
   log "SEED_DIR=$SEED_DIR"

@@ -11,10 +11,11 @@ index 392020b9..0da4c032 100644
 +target_link_libraries(seed-persistent-state-description PRIVATE validator-db)
 diff --git a/tmp/seedtool/validator/utils/seed-persistent-state-description.cpp b/validator/utils/seed-persistent-state-description.cpp
 new file mode 100644
-index 00000000..9757bc42
+index 00000000..00000000
 --- /dev/null
 +++ b/validator/utils/seed-persistent-state-description.cpp
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,178 @@
++#include "adnl/utils.hpp"
 +#include "auto/tl/ton_api.hpp"
 +#include "td/db/RocksDb.h"
 +#include "td/utils/Status.h"
@@ -28,14 +29,14 @@ index 00000000..9757bc42
 +#include <string>
 +#include <vector>
 +
-+namespace {
++namespace ton::validator {
 +
 +struct Args {
 +  std::string state_db;
-+  ton::BlockIdExt mc_block;
-+  ton::BlockIdExt shard_block;
-+  ton::UnixTime start_time = 1;
-+  ton::UnixTime end_time = (ton::UnixTime)4102444800;  // 2100-01-01
++  BlockIdExt mc_block;
++  BlockIdExt shard_block;
++  UnixTime start_time = 1;
++  UnixTime end_time = static_cast<UnixTime>(4102444800);  // 2100-01-01
 +  td::uint32 split_depth = 0;
 +  bool replace = true;
 +};
@@ -46,8 +47,8 @@ index 00000000..9757bc42
 +               " [--start-time <unix>] [--end-time <unix>] [--split-depth <n>] [--no-replace]\n";
 +}
 +
-+td::Result<ton::BlockIdExt> parse_block_id(const std::string &s) {
-+  return ton::BlockIdExt::from_str(td::Slice{s});
++td::Result<BlockIdExt> parse_block_id(const std::string &s) {
++  return BlockIdExt::from_str(td::Slice{s});
 +}
 +
 +td::Result<Args> parse_args(int argc, char **argv) {
@@ -77,10 +78,10 @@ index 00000000..9757bc42
 +      have_shard = true;
 +    } else if (key == "--start-time") {
 +      TRY_RESULT(v, need_value("--start-time"));
-+      args.start_time = static_cast<ton::UnixTime>(std::stoul(v));
++      args.start_time = static_cast<UnixTime>(std::stoul(v));
 +    } else if (key == "--end-time") {
 +      TRY_RESULT(v, need_value("--end-time"));
-+      args.end_time = static_cast<ton::UnixTime>(std::stoul(v));
++      args.end_time = static_cast<UnixTime>(std::stoul(v));
 +    } else if (key == "--split-depth") {
 +      TRY_RESULT(v, need_value("--split-depth"));
 +      args.split_depth = static_cast<td::uint32>(std::stoul(v));
@@ -109,36 +110,36 @@ index 00000000..9757bc42
 +  auto kv = std::make_shared<td::RocksDb>(td::RocksDb::open(args.state_db).move_as_ok());
 +
 +  kv->begin_write_batch().ensure();
-+  kv->set(ton::create_serialize_tl_object<ton::ton_api::db_state_key_dbVersion>(),
-+          ton::create_serialize_tl_object<ton::ton_api::db_state_dbVersion>(2).as_slice())
++  kv->set(create_serialize_tl_object<ton_api::db_state_key_dbVersion>(),
++          create_serialize_tl_object<ton_api::db_state_dbVersion>(2))
 +      .ensure();
 +
-+  auto list_key = ton::create_hash_tl_object<ton::ton_api::db_state_key_persistentStateDescriptionsList>();
++  auto list_key = create_hash_tl_object<ton_api::db_state_key_persistentStateDescriptionsList>();
 +  std::string value;
 +  auto r_list = kv->get(list_key.as_slice(), value);
 +  r_list.ensure();
 +
-+  ton::tl_object_ptr<ton::ton_api::db_state_persistentStateDescriptionsList> list;
++  tl_object_ptr<ton_api::db_state_persistentStateDescriptionsList> list;
 +  if (r_list.ok() == td::KeyValue::GetStatus::Ok) {
-+    auto parsed = ton::fetch_tl_object<ton::ton_api::db_state_persistentStateDescriptionsList>(value, true);
++    auto parsed = fetch_tl_object<ton_api::db_state_persistentStateDescriptionsList>(value, true);
 +    parsed.ensure();
 +    list = parsed.move_as_ok();
 +  } else {
-+    list = ton::create_tl_object<ton::ton_api::db_state_persistentStateDescriptionsList>(
-+        std::vector<ton::tl_object_ptr<ton::ton_api::db_state_persistentStateDescriptionHeader>>{});
++    list = create_tl_object<ton_api::db_state_persistentStateDescriptionsList>(
++        std::vector<tl_object_ptr<ton_api::db_state_persistentStateDescriptionHeader>>{});
 +  }
 +
 +  if (args.replace) {
-+    std::vector<ton::tl_object_ptr<ton::ton_api::db_state_persistentStateDescriptionHeader>> kept;
++    std::vector<tl_object_ptr<ton_api::db_state_persistentStateDescriptionHeader>> kept;
 +    for (auto &header : list->list_) {
-+      if (static_cast<ton::BlockSeqno>(header->masterchain_id_->seqno_) != args.mc_block.seqno()) {
++      if (static_cast<BlockSeqno>(header->masterchain_id_->seqno_) != args.mc_block.seqno()) {
 +        kept.push_back(std::move(header));
 +      }
 +    }
 +    list->list_ = std::move(kept);
 +  } else {
 +    for (const auto &header : list->list_) {
-+      if (static_cast<ton::BlockSeqno>(header->masterchain_id_->seqno_) == args.mc_block.seqno()) {
++      if (static_cast<BlockSeqno>(header->masterchain_id_->seqno_) == args.mc_block.seqno()) {
 +        return td::Status::Error("duplicate masterchain seqno; use replace mode or another block");
 +      }
 +    }
@@ -146,25 +147,25 @@ index 00000000..9757bc42
 +
 +  td::BufferSlice serialized_shards;
 +  if (args.split_depth == 0) {
-+    std::vector<ton::tl_object_ptr<ton::ton_api::tonNode_blockIdExt>> shard_blocks;
-+    shard_blocks.push_back(ton::create_tl_block_id(args.shard_block));
-+    serialized_shards = ton::create_serialize_tl_object<ton::ton_api::db_state_persistentStateDescriptionShards>(
++    std::vector<tl_object_ptr<ton_api::tonNode_blockIdExt>> shard_blocks;
++    shard_blocks.push_back(create_tl_block_id(args.shard_block));
++    serialized_shards = create_serialize_tl_object<ton_api::db_state_persistentStateDescriptionShards>(
 +        std::move(shard_blocks));
 +  } else {
-+    std::vector<ton::tl_object_ptr<ton::ton_api::db_state_persistentStateDescriptionShard>> shard_blocks;
-+    shard_blocks.push_back(ton::create_tl_object<ton::ton_api::db_state_persistentStateDescriptionShard>(
-+        ton::create_tl_block_id(args.shard_block), static_cast<td::int32>(args.split_depth)));
-+    serialized_shards = ton::create_serialize_tl_object<ton::ton_api::db_state_persistentStateDescriptionShardsV2>(
++    std::vector<tl_object_ptr<ton_api::db_state_persistentStateDescriptionShard>> shard_blocks;
++    shard_blocks.push_back(create_tl_object<ton_api::db_state_persistentStateDescriptionShard>(
++        create_tl_block_id(args.shard_block), static_cast<td::int32>(args.split_depth)));
++    serialized_shards = create_serialize_tl_object<ton_api::db_state_persistentStateDescriptionShardsV2>(
 +        std::move(shard_blocks));
 +  }
 +
-+  auto shards_key = ton::create_hash_tl_object<ton::ton_api::db_state_key_persistentStateDescriptionShards>(
++  auto shards_key = create_hash_tl_object<ton_api::db_state_key_persistentStateDescriptionShards>(
 +      args.mc_block.seqno());
 +  kv->set(shards_key.as_slice(), serialized_shards.as_slice()).ensure();
 +
-+  list->list_.push_back(ton::create_tl_object<ton::ton_api::db_state_persistentStateDescriptionHeader>(
-+      ton::create_tl_block_id(args.mc_block), args.start_time, args.end_time));
-+  kv->set(list_key.as_slice(), ton::serialize_tl_object(list, true).as_slice()).ensure();
++  list->list_.push_back(create_tl_object<ton_api::db_state_persistentStateDescriptionHeader>(
++      create_tl_block_id(args.mc_block), args.start_time, args.end_time));
++  kv->set(list_key.as_slice(), serialize_tl_object(list, true).as_slice()).ensure();
 +  kv->commit_write_batch().ensure();
 +
 +  std::cout << "seeded PersistentStateDescription\n";
@@ -176,16 +177,16 @@ index 00000000..9757bc42
 +  return td::Status::OK();
 +}
 +
-+}  // namespace
++}  // namespace ton::validator
 +
 +int main(int argc, char **argv) {
-+  auto r_args = parse_args(argc, argv);
++  auto r_args = ton::validator::parse_args(argc, argv);
 +  if (r_args.is_error()) {
-+    usage(argv[0]);
++    ton::validator::usage(argv[0]);
 +    std::cerr << r_args.move_as_error() << "\n";
 +    return 2;
 +  }
-+  auto status = seed(r_args.move_as_ok());
++  auto status = ton::validator::seed(r_args.move_as_ok());
 +  if (status.is_error()) {
 +    std::cerr << status << "\n";
 +    return 1;

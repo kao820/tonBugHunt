@@ -41,11 +41,21 @@ SEED_CONFIRMATION_GAP="17" \
 audit/run_stage_b_local.sh
 ```
 
+Если вы продолжаете уже начатый прогон после обновления только audit-скриптов/patch-файлов, зафиксируйте исходный commit Stage B через `STAGE_B_COMMIT`. Это не даёт скрипту пересобирать clean target и attacker на новом audit-only commit:
+
+```bash
+BASE_DIR="$HOME/ton-stage-b-local" \
+SOURCE_REPO="$HOME/src/ton-testnet-audit" \
+STAGE_B_COMMIT="41257a4d1c28c983ce81bf8e02aa8bdb4fa3ba71" \
+JOBS="1" \
+audit/run_stage_b_local.sh
+```
+
 Скрипт resumable:
 
-- если clean target уже собран на том же commit — target не пересобирается;
-- если attacker уже patched и собран на том же commit — attacker не пересобирается;
-- если seed-tool уже собран на том же commit — seed-tool не пересобирается;
+- если clean target уже собран на том же commit (`SOURCE_REPO` HEAD или `STAGE_B_COMMIT`) — target не пересобирается;
+- если attacker уже patched и собран на том же commit (`SOURCE_REPO` HEAD или `STAGE_B_COMMIT`) — attacker не пересобирается;
+- если seed-tool уже собран на том же commit (`SOURCE_REPO` HEAD или `STAGE_B_COMMIT`) — seed-tool не пересобирается;
 - каждый build пишет отдельный лог и строку `BUILD_EXIT=<код>`;
 - при ошибке скрипт печатает лог начиная с первой строки `error:` / `CMake Error`; если таких строк нет — последние 120 строк.
 
@@ -83,7 +93,7 @@ file --version
 
 `audit/run_stage_b_local.sh` выполняет только build/setup и Stage B run:
 
-1. определяет commit `SOURCE_REPO`;
+1. определяет commit `SOURCE_REPO` или использует `STAGE_B_COMMIT`, если он явно задан;
 2. создаёт/обновляет clean target checkout на этом commit;
 3. инициализирует submodules;
 4. собирает clean target через `CC=clang CXX=clang++`;
