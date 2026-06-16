@@ -7,6 +7,91 @@ Candidate: CN-ARCHIVE-01
 
 
 
+
+## FNSERVE-MASTER-01 client helper update (2026-06-12)
+
+Status: `FNSERVE-MASTER-01 = pursue / client-helper-prepared / confirmed-for-bounded-local-PoC / not report-ready / no-runtime-executed`.
+
+### Tooling discovery result
+
+No existing repo-local command-line tool was found that sends arbitrary or selected `tonNode_query` requests to a full-node-master ext-server as a non-trusted ADNL-authenticated client. The reusable pieces exist (`adnl::AdnlExtClient`, `tonNode.downloadZeroState`, `tonNode.downloadBlockFull`, and `create_serialize_tl_object_suffix<tonNode_query>`), but existing binaries are not sufficient: `validator-engine-console` and `tonlib::EngineConsoleClient` wrap requests as `engine_validator_controlQuery`, while `lite-client` and `proxy-liteserver` wrap requests as `liteServer_query`.
+
+### Files created/updated
+
+- `audit/fnserve_master_01_client/README.md` — local-only helper documentation, build command, required environment, and wrapper integration.
+- `audit/fnserve_master_01_client/fnserve_master_query_client.cpp` — minimal single-request ADNL ext-client helper for `downloadZeroState` and `downloadBlockFull`.
+- `audit/fnserve_master_01_client/CMakeLists.txt` — standalone helper build snippet that imports the repository CMake tree and builds `fnserve_master_query_client`.
+- `audit/run_fnserve_master_01_local.sh` — updated to auto-detect `audit/fnserve_master_01_client/build/fnserve_master_query_client`, pass `FNSERVE_MASTER_PUBKEY_TL_HEX` and optional `FNSERVE_CLIENT_PRIVKEY_TL_HEX`, and require the full master ADNL public key before run mode.
+- `audit/CODEX_LAST_STATUS.md` — this status update.
+
+### Exact build command
+
+```bash
+cmake -S audit/fnserve_master_01_client -B audit/fnserve_master_01_client/build
+cmake --build audit/fnserve_master_01_client/build --target fnserve_master_query_client -j"$(nproc)"
+```
+
+### Exact `FNSERVE_CLIENT_CMD`
+
+```bash
+export FNSERVE_CLIENT_CMD="audit/fnserve_master_01_client/build/fnserve_master_query_client"
+```
+
+The wrapper also auto-detects this path if it is executable.
+
+### Exact plan command
+
+```bash
+FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+```
+
+### Exact bounded run template
+
+```bash
+FNSERVE_MODE=run \
+FNSERVE_CONFIG=/path/to/local-validator-engine-config.json \
+FNSERVE_MASTER_HOST=127.0.0.1 \
+FNSERVE_MASTER_PORT=<configured-fullnodemaster-port> \
+FNSERVE_MASTER_PUBKEY_TL_HEX='<TL-serialized full master ADNL public key as hex>' \
+FNSERVE_CLIENT_CMD='audit/fnserve_master_01_client/build/fnserve_master_query_client' \
+FNSERVE_ZERO_STATE_BLOCK='(workchain,shard_hex,seqno):root_hash_hex:file_hash_hex' \
+FNSERVE_BLOCK_ID='(workchain,shard_hex,seqno):root_hash_hex:file_hash_hex' \
+FNSERVE_TARGET_PID=<validator-engine-pid> \
+bash audit/run_fnserve_master_01_local.sh
+```
+
+### Helper safety and request behavior
+
+- The helper refuses public hosts by default and requires explicit `FNSERVE_MASTER_HOST` and `FNSERVE_MASTER_PORT`.
+- The helper sends exactly one request per invocation.
+- The helper supports only `downloadZeroState` and `downloadBlockFull`.
+- The helper requires `FNSERVE_MASTER_PUBKEY_TL_HEX` because ADNL ext-client setup needs the full server public key, not just the short ADNL hash stored in `fullnodemasters` config entries.
+- The helper uses an ephemeral Ed25519 client key unless `FNSERVE_CLIENT_PRIVKEY_TL_HEX` is provided, so it does not require validator-engine-console or trusted operator control access.
+- The wrapper remains responsible for request count, parallelism, timeout, disk, process, and shard-limiter comparison safety limits.
+
+### What was not executed
+
+- No helper build was run.
+- No repository tests were run.
+- No dependency installation was run.
+- No local or public traffic was sent.
+- No PoC runtime was executed.
+
+### BLOCKER/CLOSE criteria after helper update
+
+- `BLOCKER_LOCAL_TOPOLOGY`: helper binary is not built, no configured full-node-master port exists, no full master ADNL public key is available, or no zero-state/known-block target is available.
+- `BLOCKER_REACHABILITY`: the local/private master ext-server cannot be reached by the helper using non-trusted ADNL authentication.
+- `BLOCKER_UPSTREAM_LIMITER`: future runtime evidence shows an upstream limiter equivalent to shard `limiter_->check_in(...)` fires before master heavy processing.
+- `CLOSE_LOW_IMPACT`: helper traffic succeeds but metrics show only normal full-node bandwidth serving without meaningful CPU/DB/actor pressure or shard limiter contrast.
+
+### Logs to send back after a bounded local run
+
+- `${FNSERVE_WORKDIR}/run/final_verdict.txt`.
+- `${FNSERVE_WORKDIR}/run/request_counts.tsv` and `${FNSERVE_WORKDIR}/run/summary_counts.tsv`.
+- `${FNSERVE_WORKDIR}/logs/client_*` request stdout/stderr files.
+- `${FNSERVE_WORKDIR}/metrics/df_*`, `du_*`, `ps_*`, `proc_io_*`, and `proc_status_*` files, when present.
+- Target full-node-master logs and any shard limiter comparison logs.
+
 ## FNSERVE-MASTER-01 local PoC package (2026-06-12)
 
 Status: `FNSERVE-MASTER-01 = pursue / confirmed-for-bounded-local-PoC / not report-ready / no-runtime-executed`.
@@ -40,7 +125,8 @@ FNSERVE_MODE=run \
 FNSERVE_CONFIG=/path/to/local-validator-engine-config.json \
 FNSERVE_MASTER_HOST=127.0.0.1 \
 FNSERVE_MASTER_PORT=<configured-fullnodemaster-port> \
-FNSERVE_CLIENT_CMD='<local non-trusted ADNL tonNode_query client command>' \
+FNSERVE_MASTER_PUBKEY_TL_HEX='<TL-serialized full master ADNL public key as hex>' \
+FNSERVE_CLIENT_CMD='audit/fnserve_master_01_client/build/fnserve_master_query_client' \
 FNSERVE_ZERO_STATE_BLOCK='<zero-state block id>' \
 FNSERVE_BLOCK_ID='<known received block id>' \
 FNSERVE_TARGET_PID=<validator-engine-pid> \
@@ -63,7 +149,7 @@ The script refuses run mode unless required tools, initialized submodules, a loc
 
 - Identifying configured `fullnodemaster`: parse `FNSERVE_CONFIG` for `fullnodemasters`/`full_node_masters`, or set `FNSERVE_MASTER_PORT`/`FNSERVE_MASTER_ADNL`; source references are `validator-engine/validator-engine.cpp::config_add_full_node_master` and `ValidatorEngine::start_full_node_masters`.
 - Identifying ext-server port: `FullNodeMasterImpl::start_up()` calls `adnl::Adnl::create_ext_server({adnl_id_}, {port_}, ...)`; `AdnlExtServerImpl::add_tcp_port()` creates the TCP listener for that port.
-- Identifying client tool: repo-local static review did not identify a generic non-trusted ADNL CLI that can emit arbitrary `tonNode_query`; `validator-engine-console` is not treated as such because it is an operator/control tool. Run mode therefore requires `FNSERVE_CLIENT_CMD` and returns `BLOCKER_LOCAL_TOPOLOGY` if absent.
+- Identifying client tool: the original static review did not find an existing non-trusted ADNL `tonNode_query` CLI, so this package now includes `audit/fnserve_master_01_client/fnserve_master_query_client.cpp`; `validator-engine-console` is still not treated as sufficient because it is an operator/control tool. Run mode auto-detects the helper binary or accepts `FNSERVE_CLIENT_CMD` and returns `BLOCKER_LOCAL_TOPOLOGY` if neither is available.
 - Identifying known block: set `FNSERVE_BLOCK_ID` from local/private validator DB/log/console output for a received block; unknown/unreceived blocks are cheap rejected by `BlockFullSender` before DB data/proof reads.
 - Identifying zero-state request: set `FNSERVE_ZERO_STATE_BLOCK` from the local/private validator zero-state id/config.
 - Shard comparison: provide `FNSERVE_SHARD_COMPARE_CMD` or `FNSERVE_SHARD_LIMITER_LOG` if a comparable shard-path limiter run is available.

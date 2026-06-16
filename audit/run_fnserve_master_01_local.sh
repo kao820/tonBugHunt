@@ -164,8 +164,14 @@ identify_client() {
     printf 'client_cmd\t%s\n' "${FNSERVE_CLIENT_CMD}" >> "${PLAN_DIR}/client.txt"
     return 0
   fi
+  local helper="${REPO_ROOT}/audit/fnserve_master_01_client/build/fnserve_master_query_client"
+  if [[ -x "${helper}" ]]; then
+    FNSERVE_CLIENT_CMD="${helper}"
+    printf 'client_cmd\t%s\n' "${FNSERVE_CLIENT_CMD}" >> "${PLAN_DIR}/client.txt"
+    return 0
+  fi
   # Deliberately do not treat validator-engine-console as a non-trusted tonNode_query client: it is an operator console.
-  printf 'BLOCKER\tNo repo-local non-trusted ADNL tonNode_query client CLI was identified. Set FNSERVE_CLIENT_CMD to a local/private client command if available.\n' >> "${PLAN_DIR}/client.txt"
+  printf 'BLOCKER\tBuild audit/fnserve_master_01_client/fnserve_master_query_client or set FNSERVE_CLIENT_CMD to a local/private tonNode_query client.\n' >> "${PLAN_DIR}/client.txt"
   return 1
 }
 
@@ -192,7 +198,9 @@ Exact repo-local/static identification commands:
    rg -n 'create_ext_server|add_tcp_port|TcpInfiniteListener' validator/full-node-master.cpp adnl
 3. client used to send tonNode_query:
    rg -n 'tonNode_query|AdnlExtClient|send_query' validator test crypto lite-client utils
-   NOTE: this pass did not identify a generic repo-local non-trusted tonNode_query CLI; run mode requires FNSERVE_CLIENT_CMD.
+   cmake -S audit/fnserve_master_01_client -B audit/fnserve_master_01_client/build
+   cmake --build audit/fnserve_master_01_client/build --target fnserve_master_query_client -j"$(nproc)"
+   FNSERVE_CLIENT_CMD="${REPO_ROOT}/audit/fnserve_master_01_client/build/fnserve_master_query_client"
 4. known block for downloadBlockFull:
    Provide FNSERVE_BLOCK_ID from local/private validator DB/log/console output for a received block; unknown blocks are cheap rejected before DB data/proof reads.
 5. zero-state parameters for downloadZeroState:
@@ -205,6 +213,7 @@ FNSERVE_MODE=run \\
 FNSERVE_CONFIG=/path/to/local-validator-engine-config.json \\
 FNSERVE_MASTER_HOST=127.0.0.1 \\
 FNSERVE_MASTER_PORT=<configured-fullnodemaster-port> \\
+FNSERVE_MASTER_PUBKEY_TL_HEX='<TL-serialized full master ADNL public key as hex>' \\
 FNSERVE_CLIENT_CMD='<local non-trusted ADNL tonNode_query client command>' \\
 FNSERVE_ZERO_STATE_BLOCK='<zero-state block id>' \\
 FNSERVE_BLOCK_ID='<known received block id>' \\
@@ -222,7 +231,8 @@ FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
 # FNSERVE_CONFIG=/path/to/local-validator-engine-config.json \
 # FNSERVE_MASTER_HOST=127.0.0.1 \
 # FNSERVE_MASTER_PORT=<configured-fullnodemaster-port> \
-# FNSERVE_CLIENT_CMD='<local client command that sends one request based on FNSERVE_REQUEST_KIND>' \
+# FNSERVE_MASTER_PUBKEY_TL_HEX='<TL-serialized full master ADNL public key as hex>' \
+# FNSERVE_CLIENT_CMD='audit/fnserve_master_01_client/build/fnserve_master_query_client' \
 # FNSERVE_ZERO_STATE_BLOCK='<zero-state block id>' \
 # FNSERVE_BLOCK_ID='<known received block id>' \
 # FNSERVE_TARGET_PID=<validator-engine-pid> \
@@ -269,6 +279,8 @@ run_one_request() {
   FNSERVE_REQUEST_NO="${idx}" \
   FNSERVE_MASTER_HOST="${FNSERVE_MASTER_HOST}" \
   FNSERVE_MASTER_PORT="${FNSERVE_MASTER_PORT:-}" \
+  FNSERVE_MASTER_PUBKEY_TL_HEX="${FNSERVE_MASTER_PUBKEY_TL_HEX:-}" \
+  FNSERVE_CLIENT_PRIVKEY_TL_HEX="${FNSERVE_CLIENT_PRIVKEY_TL_HEX:-}" \
   FNSERVE_ZERO_STATE_BLOCK="${FNSERVE_ZERO_STATE_BLOCK:-}" \
   FNSERVE_BLOCK_ID="${FNSERVE_BLOCK_ID:-}" \
   timeout "${FNSERVE_CLIENT_TIMEOUT}" bash -lc "${FNSERVE_CLIENT_CMD}" >"${out}" 2>"${err}" || rc=$?
@@ -282,6 +294,7 @@ run_mode() {
   parse_fullnodemaster_config || fail_verdict BLOCKER_LOCAL_TOPOLOGY "no full-node master config/port identified; set FNSERVE_CONFIG or FNSERVE_MASTER_PORT"
   identify_client || fail_verdict BLOCKER_LOCAL_TOPOLOGY "no repo-local non-trusted ADNL client path identified; set FNSERVE_CLIENT_CMD only for local/private topology"
   identify_targets || fail_verdict BLOCKER_LOCAL_TOPOLOGY "no known block or zero-state target identified; set FNSERVE_ZERO_STATE_BLOCK and/or FNSERVE_BLOCK_ID"
+  [[ -n "${FNSERVE_MASTER_PUBKEY_TL_HEX:-}" ]] || fail_verdict BLOCKER_LOCAL_TOPOLOGY "FNSERVE_MASTER_PUBKEY_TL_HEX is required for ADNL ext-client encryption/authentication"
   [[ -n "${FNSERVE_MASTER_PORT:-}" ]] || FNSERVE_MASTER_PORT="$(awk -F'port=' '/port=/{split($2,a,"\t"); print a[1]; exit}' "${PLAN_DIR}/fullnodemaster_config.txt")"
   [[ -n "${FNSERVE_MASTER_PORT:-}" ]] || fail_verdict BLOCKER_LOCAL_TOPOLOGY "no master ext-server port can be identified"
 
@@ -335,7 +348,7 @@ run_mode() {
 plan_mode() {
   find_build_artifacts || log "BLOCKER: build artifacts missing; set FNSERVE_VALIDATOR_ENGINE to a local validator-engine binary"
   parse_fullnodemaster_config || log "BLOCKER: full-node master config absent; set FNSERVE_CONFIG or FNSERVE_MASTER_PORT"
-  identify_client || log "BLOCKER: no non-trusted ADNL tonNode_query client path identified"
+  identify_client || log "BLOCKER: fnserve_master_query_client is not built and no FNSERVE_CLIENT_CMD override was provided"
   identify_targets || log "BLOCKER: no known block or zero-state target identified"
   log "plan file: ${SUMMARY_FILE}"
   log "commands file: ${COMMANDS_FILE}"
