@@ -11,6 +11,7 @@ FNSERVE_MODE="${FNSERVE_MODE:-plan}"
 FNSERVE_MIN_FREE_BYTES="${FNSERVE_MIN_FREE_BYTES:-1073741824}"
 FNSERVE_CLIENT_TIMEOUT="${FNSERVE_CLIENT_TIMEOUT:-15}"
 FNSERVE_MASTER_HOST="${FNSERVE_MASTER_HOST:-127.0.0.1}"
+FNSERVE_TOPOLOGY_ENV="${FNSERVE_TOPOLOGY_ENV:-$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -24,6 +25,13 @@ COUNTS_FILE="${RUN_DIR}/request_counts.tsv"
 STOP_FILE="${RUN_DIR}/STOP"
 
 mkdir -p "${LOG_DIR}" "${METRICS_DIR}" "${PLAN_DIR}" "${RUN_DIR}"
+
+load_topology_env() {
+  if [[ -f "${FNSERVE_TOPOLOGY_ENV}" ]]; then
+    # shellcheck disable=SC1090
+    source "${FNSERVE_TOPOLOGY_ENV}"
+  fi
+}
 
 log() { printf '[fnserve-master-01] %s\n' "$*"; }
 fail_verdict() {
@@ -50,6 +58,7 @@ require_uints() {
 }
 
 print_repo_context() {
+  load_topology_env
   log "repo root: ${REPO_ROOT}"
   git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's/^/[fnserve-master-01] branch: /'
   git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null | sed 's/^/[fnserve-master-01] commit: /'
@@ -188,6 +197,10 @@ Safety defaults:
 - FNSERVE_MAX_PARALLEL=\${FNSERVE_MAX_PARALLEL:-4}
 - FNSERVE_MIN_FREE_BYTES=\${FNSERVE_MIN_FREE_BYTES:-1073741824}
 
+Topology setup command (does not send PoC traffic):
+FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=/path/to/local/build bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+source "${FNSERVE_TOPOLOGY_ENV}"
+
 Exact repo-local/static identification commands:
 1. configured full-node master:
    rg -n 'fullnodemasters|full_node_masters|config_add_full_node_master|start_full_node_masters' validator-engine validator test audit
@@ -224,7 +237,12 @@ PLAN
 #!/usr/bin/env bash
 set -Eeuo pipefail
 # Safe plan-only example. Fill paths from a local/private topology only; do not use public network.
+FNSERVE_TOPOLOGY_MODE=plan bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+
+# Private topology setup (no PoC traffic):
+# FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=/path/to/local/build bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+# source "$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env"
 
 # Bounded run template (requires local non-trusted ADNL client command):
 # FNSERVE_MODE=run \

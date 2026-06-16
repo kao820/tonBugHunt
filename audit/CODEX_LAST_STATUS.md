@@ -1,3 +1,70 @@
+# FNSERVE-MASTER-01 topology setup update — 2026-06-16
+
+`FNSERVE-MASTER-01 = pursue / confirmed-for-bounded-local-PoC / BLOCKER_LOCAL_TOPOLOGY until private topology env is produced / not report-ready`.
+
+## Local topology package created
+
+Created a repo-local, private-only setup path for the missing full-node-master run variables:
+
+- `audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh`
+  - `FNSERVE_TOPOLOGY_MODE=plan` prints the setup/run plan only.
+  - `FNSERVE_TOPOLOGY_MODE=start` starts a private `test/tontester` validator/fullnode topology under `${FNSERVE_TOPOLOGY_WORKDIR:-$HOME/ton-fnserve-master-01-topology}`.
+  - The generated topology injects one `engine.validator.fullNodeMaster` entry into the in-memory copied tontester local config before validator-engine writes its workdir config; production configs are not mutated.
+  - The topology is bounded by `FNSERVE_TOPOLOGY_MAX_SECONDS` and writes PID/log/env files under the audit workdir.
+- `audit/fnserve_master_01_topology/extract_fullnodemaster_env.py`
+  - Reuse/extract mode for an existing local/private config that already contains `fullnodemasters`.
+  - Refuses non-local master hosts.
+  - Emits `FORMAT FNSERVE_TOPOLOGY_BLOCKED` if any required run variable cannot be derived.
+- `audit/fnserve_master_01_topology/README.md`
+  - Documents plan/start/reuse modes and how to feed the generated env file into the bounded PoC wrapper.
+- `audit/run_fnserve_master_01_local.sh`
+  - Now auto-loads `${FNSERVE_TOPOLOGY_ENV:-$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env}` when present.
+  - Plan output now includes the topology setup command.
+
+## Variables produced on successful topology start
+
+The setup helper writes `$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env` with:
+
+- `FNSERVE_CONFIG`
+- `FNSERVE_MASTER_HOST=127.0.0.1`
+- `FNSERVE_MASTER_PORT`
+- `FNSERVE_MASTER_PUBKEY_TL_HEX`
+- `FNSERVE_ZERO_STATE_BLOCK`
+- `FNSERVE_BLOCK_ID`
+- `FNSERVE_TARGET_PID`
+- `FNSERVE_VALIDATOR_ENGINE`
+
+## Exact setup command
+
+```bash
+FNSERVE_TOPOLOGY_MODE=start \
+FNSERVE_BUILD_DIR=/path/to/local/build \
+bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+```
+
+## Exact plan command after setup
+
+```bash
+source "$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env"
+FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+```
+
+## What was not executed
+
+No topology start, build, public network access, PoC traffic, or report-generation was executed by this Codex task.
+
+## Safety guarantees
+
+- Local/private only: full-node-master host is `127.0.0.1`.
+- No public IPs or public network.
+- No production config mutation; generated configs live under `$HOME/ton-fnserve-master-01-topology`.
+- No destructive cleanup and no `git clean`.
+- Strict timeout via `FNSERVE_TOPOLOGY_MAX_SECONDS`.
+- PID and logs are written under the audit workdir.
+- The topology setup script sends no `downloadZeroState` or `downloadBlockFull` PoC traffic; traffic is only possible if the operator separately runs `FNSERVE_MODE=run` in the bounded wrapper.
+
+---
+
 FULLNODE_SERVE_PASS_MARKER_20260612
 # CODEX_LAST_STATUS
 
