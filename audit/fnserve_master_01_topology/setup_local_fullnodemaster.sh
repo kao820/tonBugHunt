@@ -20,9 +20,12 @@ LOG_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/logs"
 ENV_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/env"
 RUN_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/run"
 TOPOLOGY_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/tontester-topology"
+PY_ROOT="${FNSERVE_TOPOLOGY_WORKDIR}/python"
+TONAPI_DIR="${PY_ROOT}/tonapi"
 ENV_FILE="${ENV_DIR}/fnserve_master_01.env"
 PID_FILE="${RUN_DIR}/topology.pid"
 HARNESS_FILE="${RUN_DIR}/fnserve_master_topology_harness.py"
+IMPORT_CHECK_LOG="${LOG_DIR}/python_import_check.log"
 
 mkdir -p "${LOG_DIR}" "${ENV_DIR}" "${RUN_DIR}"
 
@@ -118,6 +121,8 @@ async def main() -> int:
     master_port = int(os.environ["FNSERVE_MASTER_PORT"])
     max_seconds = int(os.environ.get("FNSERVE_TOPOLOGY_MAX_SECONDS", "900"))
 
+    py_root = Path(os.environ["FNSERVE_PY_ROOT"]).resolve()
+    sys.path.insert(0, str(py_root))
     sys.path.insert(0, str(repo_root / "test" / "tontester" / "src"))
     from tontester.install import Install
     from tontester.network import Network, StartOptions
@@ -184,12 +189,29 @@ PY
   chmod +x "${HARNESS_FILE}"
 }
 
+ensure_tonapi() {
+  log "ensuring repo-local tonapi Python bindings under ${TONAPI_DIR}"
+  local out
+  if ! out="$(python3 "${SCRIPT_DIR}/ensure_tonapi.py" --repo-root "${REPO_ROOT}" --output-root "${PY_ROOT}" 2>&1)"; then
+    printf '%s\n' "${out}" > "${IMPORT_CHECK_LOG}"
+    fail "failed to generate repo-local tonapi bindings; see ${IMPORT_CHECK_LOG}"
+  fi
+  printf '%s\n' "${out}" > "${IMPORT_CHECK_LOG}"
+  PYTHONPATH="${PY_ROOT}:${REPO_ROOT}/test/tontester/src:${PYTHONPATH:-}" python3 - <<'PY' >> "${IMPORT_CHECK_LOG}" 2>&1 || fail "python import validation failed for tonapi/tontester; see ${IMPORT_CHECK_LOG}"
+from tonapi import ton_api, tonlib_api
+from tontester.install import Install
+print("import_validation=ok")
+PY
+  log "tonapi_path=${TONAPI_DIR}"
+}
+
 start_topology() {
   is_private_host "${FNSERVE_MASTER_HOST}" || fail "refusing non-local master host ${FNSERVE_MASTER_HOST}"
   local build_dir
   build_dir="$(find_build_dir)" || fail "validator-engine build artifacts missing; expected validator-engine/validator-engine in FNSERVE_BUILD_DIR or common build dirs"
   [[ -d "${REPO_ROOT}/test/tontester/src" ]] || fail "repo-local tontester harness missing"
   [[ -f "${REPO_ROOT}/test/tontester/src/tontester/network.py" ]] || fail "tontester network.py missing"
+  ensure_tonapi
 
   write_harness
   log "starting private tontester validator/fullnode topology; no PoC traffic is sent"
@@ -200,6 +222,8 @@ start_topology() {
     export FNSERVE_ENV_FILE="${ENV_FILE}"
     export FNSERVE_MASTER_PORT="${FNSERVE_MASTER_PORT}"
     export FNSERVE_TOPOLOGY_MAX_SECONDS="${FNSERVE_TOPOLOGY_MAX_SECONDS}"
+    export FNSERVE_PY_ROOT="${PY_ROOT}"
+    export PYTHONPATH="${PY_ROOT}:${REPO_ROOT}/test/tontester/src:${PYTHONPATH:-}"
     exec timeout --foreground "${FNSERVE_TOPOLOGY_MAX_SECONDS}" python3 "${HARNESS_FILE}"
   ) >"${LOG_DIR}/topology.log" 2>&1 &
   local harness_pid=$!
@@ -211,11 +235,12 @@ start_topology() {
       log "env_file=${ENV_FILE}"
       cat "${ENV_FILE}"
       printf 'FORMAT FNSERVE_TOPOLOGY_READY\n'
-      printf 'exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/run_fnserve_master_01_local.sh, audit/CODEX_LAST_STATUS.md\n'
+      printf 'exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/ensure_tonapi.py, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md\n'
       printf 'exact setup command: FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=%q bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh\n' "${build_dir}"
       printf 'exact plan command: source %q && FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh\n' "${ENV_FILE}"
+      printf 'exact generated/located tonapi path: %s\n' "${TONAPI_DIR}"
       printf 'exact variables generated: FNSERVE_CONFIG FNSERVE_MASTER_HOST FNSERVE_MASTER_PORT FNSERVE_MASTER_PUBKEY_TL_HEX FNSERVE_ZERO_STATE_BLOCK FNSERVE_BLOCK_ID FNSERVE_TARGET_PID FNSERVE_VALIDATOR_ENGINE\n'
-      printf 'safety guarantees: 127.0.0.1 only, audit workdir only, timeout pid/log files, no public network, no PoC traffic, no git clean\n'
+      printf 'safety guarantees: 127.0.0.1 only, audit workdir only, repo-local generated tonapi only, timeout pid/log files, no public network, no PoC traffic, no git clean\n'
       printf 'what was not executed: no FNSERVE-MASTER-01 request traffic was sent\n'
       return 0
     fi
@@ -250,11 +275,12 @@ extract_or_reuse() {
 plan() {
   cat <<PLAN
 FORMAT FNSERVE_TOPOLOGY_READY
-exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/run_fnserve_master_01_local.sh, audit/CODEX_LAST_STATUS.md
+exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/ensure_tonapi.py, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md
 exact setup command: FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=<repo-build-dir> bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 exact plan command: source ${ENV_FILE} && FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+exact generated/located tonapi path: ${TONAPI_DIR}
 exact variables generated: FNSERVE_CONFIG FNSERVE_MASTER_HOST FNSERVE_MASTER_PORT FNSERVE_MASTER_PUBKEY_TL_HEX FNSERVE_ZERO_STATE_BLOCK FNSERVE_BLOCK_ID FNSERVE_TARGET_PID FNSERVE_VALIDATOR_ENGINE
-safety guarantees: local/private 127.0.0.1 fullNodeMaster only; copied tontester config under ${FNSERVE_TOPOLOGY_WORKDIR}; strict timeout ${FNSERVE_TOPOLOGY_MAX_SECONDS}s; PID/log/env files under audit workdir; no public network; no PoC traffic; no git clean
+safety guarantees: local/private 127.0.0.1 fullNodeMaster only; repo-local tonapi generated under ${TONAPI_DIR}; copied tontester config under ${FNSERVE_TOPOLOGY_WORKDIR}; strict timeout ${FNSERVE_TOPOLOGY_MAX_SECONDS}s; PID/log/env files under audit workdir; no public network; no PoC traffic; no git clean
 what was not executed: topology start and request traffic are not executed in plan mode
 PLAN
 }

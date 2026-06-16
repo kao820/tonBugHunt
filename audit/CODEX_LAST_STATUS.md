@@ -1,3 +1,59 @@
+# FNSERVE-MASTER-01 topology tonapi fix — 2026-06-16
+
+`FNSERVE-MASTER-01 = pursue / confirmed-for-bounded-local-PoC / topology-tonapi-generation-added / not report-ready`.
+
+## Fix for `ModuleNotFoundError: No module named 'tonapi'`
+
+The correct repo-local source for Python TL bindings is the tontester generator:
+
+- generator: `test/tontester/src/tl/gen.py`
+- schemas: `tl/generate/scheme/lite_api.tl`, `tl/generate/scheme/ton_api.tl`, `tl/generate/scheme/tonlib_api.tl`
+- existing repo entrypoint: `test/tontester/generate_tl.py`, which normally generates into `test/tontester/src/tonapi`
+
+The audit topology package now generates the same `tonapi` package under the topology workdir instead of mutating the source tree:
+
+- generated/located `tonapi` path: `$HOME/ton-fnserve-master-01-topology/python/tonapi`
+- `PYTHONPATH` prefix used by the harness: `$HOME/ton-fnserve-master-01-topology/python:/workspace/tonBugHunt/test/tontester/src`
+
+## Files updated
+
+- `audit/fnserve_master_01_topology/ensure_tonapi.py` — new helper that generates `lite_api.py`, `ton_api.py`, and `tonlib_api.py` from repo TL schemas into the audit workdir and validates imports.
+- `audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh` — now calls `ensure_tonapi.py` before topology start, records import validation in `logs/python_import_check.log`, exports the generated package path in `PYTHONPATH`, and includes the generated `tonapi` path in `FORMAT FNSERVE_TOPOLOGY_READY` output.
+- `audit/fnserve_master_01_topology/README.md` — documents local TL generation, import validation, and no external `pip install tonapi` dependency.
+- `audit/CODEX_LAST_STATUS.md` — this status update.
+
+## Exact setup command
+
+```bash
+FNSERVE_TOPOLOGY_MODE=start \
+FNSERVE_BUILD_DIR=/path/to/local/build \
+bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+```
+
+## Exact plan command
+
+```bash
+source "$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env"
+FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+```
+
+## Expected env variables
+
+- `FNSERVE_CONFIG`
+- `FNSERVE_MASTER_HOST=127.0.0.1`
+- `FNSERVE_MASTER_PORT`
+- `FNSERVE_MASTER_PUBKEY_TL_HEX`
+- `FNSERVE_ZERO_STATE_BLOCK`
+- `FNSERVE_BLOCK_ID`
+- `FNSERVE_TARGET_PID`
+- `FNSERVE_VALIDATOR_ENGINE`
+
+## What was not executed
+
+No topology start, public TON network access, PoC request traffic, or report generation was executed by this Codex task.
+
+---
+
 # FNSERVE-MASTER-01 topology setup update — 2026-06-16
 
 `FNSERVE-MASTER-01 = pursue / confirmed-for-bounded-local-PoC / BLOCKER_LOCAL_TOPOLOGY until private topology env is produced / not report-ready`.

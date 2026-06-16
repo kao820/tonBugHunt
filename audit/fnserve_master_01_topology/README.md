@@ -17,7 +17,10 @@ FNSERVE_BUILD_DIR=/path/to/local/build \
 bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 ```
 
-Starts a private `test/tontester` validator/fullnode topology under
+Generates repo-local Python TL bindings (`tonapi.ton_api` and `tonapi.tonlib_api`) under
+`${FNSERVE_TOPOLOGY_WORKDIR:-$HOME/ton-fnserve-master-01-topology}/python/tonapi`, validates
+`from tonapi import ton_api, tonlib_api` and `from tontester.install import Install`,
+then starts a private `test/tontester` validator/fullnode topology under
 `${FNSERVE_TOPOLOGY_WORKDIR:-$HOME/ton-fnserve-master-01-topology}`, injects an
 `engine.validator.fullNodeMaster` entry into the copied local test config before
 `validator-engine` starts, waits for a local masterchain block, and writes:
@@ -37,8 +40,8 @@ The env file contains:
 * `FNSERVE_TARGET_PID`
 * `FNSERVE_VALIDATOR_ENGINE`
 
-The topology process is bounded by `FNSERVE_TOPOLOGY_MAX_SECONDS` and writes PID
-and logs under the audit workdir.
+The topology process is bounded by `FNSERVE_TOPOLOGY_MAX_SECONDS` and writes PID,
+logs, generated Python bindings, and import-check output under the audit workdir.
 
 ## Reuse/extract mode
 
@@ -53,7 +56,8 @@ bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 
 The extractor refuses non-local hosts and reports `FORMAT FNSERVE_TOPOLOGY_BLOCKED`
 if any required run variable cannot be derived from the config, logs, live process,
-or supplied local environment.
+or supplied local environment. The start path does not rely on external `pip install tonapi`;
+it uses `test/tontester/src/tl/gen.py` against `tl/generate/scheme/{lite_api,ton_api,tonlib_api}.tl`.
 
 ## Running the PoC wrapper after setup
 
