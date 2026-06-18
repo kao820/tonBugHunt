@@ -5,6 +5,36 @@ It does not send PoC traffic and does not mutate production configs.
 
 ## Modes
 
+### Reproducible matching build and start
+
+Use the current worktree with Clang and Python 3.14 or newer. This avoids the
+GCC 13 C++20 coroutine/chrono compatibility failures and the Python 3.12 eager
+annotation failures without patching product sources:
+
+```bash
+FNSERVE_TOPOLOGY_MODE=build-start \
+FNSERVE_BUILD_DIR="$HOME/ton-fnserve-master-01-build" \
+FNSERVE_BUILD_JOBS=12 \
+bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+```
+
+`build-start` invokes `build_matching_binaries.sh`, which configures a clean
+Clang build and builds the exact binaries used by `test/tontester`:
+
+* `validator-engine`
+* `validator-engine-console`
+* `create-state`
+* `fift`
+* `lite-client`
+* `dht-server`
+* `generate-random-id`
+* `tonlibjson`
+
+The build preflight requires initialized direct submodules plus `cmake`,
+`ninja`, `clang`, `clang++`, `autoconf`, `automake`, and `libtool`. Generated
+smart-contract Fift files are consumed from the matching build or source
+generation directory; no copied production configuration is modified.
+
 ```bash
 FNSERVE_TOPOLOGY_MODE=plan bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 ```
@@ -42,6 +72,9 @@ The env file contains:
 
 The topology process is bounded by `FNSERVE_TOPOLOGY_MAX_SECONDS` and writes PID,
 logs, generated Python bindings, and import-check output under the audit workdir.
+Each start uses a unique `runs/<UTC timestamp>-<pid>/tontester-topology`
+directory, so a stale keyring from an older bounded run is never reused or
+destructively deleted.
 
 ## Reuse/extract mode
 

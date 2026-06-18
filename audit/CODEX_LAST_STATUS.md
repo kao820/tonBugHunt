@@ -1,3 +1,39 @@
+# FNSERVE-MASTER-01 reproducible private topology — 2026-06-18
+
+`FNSERVE-MASTER-01 = pursue / private-topology-ready / runtime-PoC-not-executed / not report-ready`.
+
+## Reproducible harness result
+
+- A clean current-worktree build succeeded with Clang 17 without product-source compatibility patches.
+- Matching `validator-engine`, `validator-engine-console`, `create-state`, `fift`, and `lite-client` binaries were built; the topology-required `dht-server`, `generate-random-id`, and `tonlibjson` artifacts were built in the same tree.
+- The setup uses Python 3.14 or newer rather than patching Python 3.12 annotation sites.
+- Generated smart-contract Fift files are taken from the matching CMake generation output instead of copied into a production config.
+- Every topology start uses a new workdir run directory, preventing stale `keyring` collisions without destructive cleanup.
+- The private `test/tontester` topology started on `127.0.0.1`, produced masterchain block 2, and generated `$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env` with all eight required variables.
+- `FNSERVE_MODE=plan` completed without sending request traffic. `FNSERVE_MODE=run` was not executed.
+
+## Reproducible commands
+
+```bash
+FNSERVE_TOPOLOGY_MODE=build-start \
+FNSERVE_BUILD_DIR="$HOME/ton-fnserve-master-01-build" \
+FNSERVE_BUILD_JOBS=12 \
+bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+
+source "$HOME/ton-fnserve-master-01-topology/env/fnserve_master_01.env"
+FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
+```
+
+## Safety status
+
+- Local/private host only: `127.0.0.1`.
+- No public TON network configuration is loaded.
+- No production config is mutated; tontester writes a copied config under the audit workdir.
+- Topology lifetime is bounded by `FNSERVE_TOPOLOGY_MAX_SECONDS` and PID/log/env files stay under `$HOME/ton-fnserve-master-01-topology`.
+- No `git clean`, destructive topology cleanup, or PoC request traffic was used.
+
+---
+
 # FNSERVE-MASTER-01 topology tonapi fix — 2026-06-16
 
 `FNSERVE-MASTER-01 = pursue / confirmed-for-bounded-local-PoC / topology-tonapi-generation-added / not report-ready`.

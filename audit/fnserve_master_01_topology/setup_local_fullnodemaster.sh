@@ -7,19 +7,20 @@ set -euo pipefail
 # audit/run_fnserve_master_01_local.sh.
 
 FNSERVE_TOPOLOGY_WORKDIR="${FNSERVE_TOPOLOGY_WORKDIR:-$HOME/ton-fnserve-master-01-topology}"
-FNSERVE_TOPOLOGY_MODE="${FNSERVE_TOPOLOGY_MODE:-plan}"   # plan | start | reuse | extract
+FNSERVE_TOPOLOGY_MODE="${FNSERVE_TOPOLOGY_MODE:-plan}"   # plan | build-start | start | reuse | extract
 FNSERVE_TOPOLOGY_MAX_SECONDS="${FNSERVE_TOPOLOGY_MAX_SECONDS:-900}"
 FNSERVE_TOPOLOGY_WAIT_SECONDS="${FNSERVE_TOPOLOGY_WAIT_SECONDS:-90}"
 FNSERVE_MASTER_HOST="${FNSERVE_MASTER_HOST:-127.0.0.1}"
 FNSERVE_MASTER_PORT="${FNSERVE_MASTER_PORT:-30201}"
-FNSERVE_BUILD_DIR="${FNSERVE_BUILD_DIR:-}"
+FNSERVE_BUILD_DIR="${FNSERVE_BUILD_DIR:-$HOME/ton-fnserve-master-01-build}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LOG_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/logs"
 ENV_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/env"
 RUN_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/run"
-TOPOLOGY_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/tontester-topology"
+FNSERVE_TOPOLOGY_RUN_ID="${FNSERVE_TOPOLOGY_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+TOPOLOGY_DIR="${FNSERVE_TOPOLOGY_WORKDIR}/runs/${FNSERVE_TOPOLOGY_RUN_ID}/tontester-topology"
 PY_ROOT="${FNSERVE_TOPOLOGY_WORKDIR}/python"
 TONAPI_DIR="${PY_ROOT}/tonapi"
 ENV_FILE="${ENV_DIR}/fnserve_master_01.env"
@@ -73,7 +74,7 @@ print_context() {
 
 check_tools() {
   local missing=0 tool
-  for tool in git python3 timeout; do
+  for tool in git python3 timeout cmake ninja; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       log "missing tool: ${tool}"
       missing=1
@@ -82,6 +83,10 @@ check_tools() {
     fi
   done
   [[ "$missing" -eq 0 ]] || fail "required local tooling missing"
+  python3 - <<'PY' || fail "test/tontester requires Python >=3.14; use an isolated Python 3.14 venv"
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 14) else 1)
+PY
 }
 
 write_harness() {
@@ -128,7 +133,17 @@ async def main() -> int:
     from tontester.network import Network, StartOptions
     from tonapi import ton_api
 
-    install = Install(build_dir, repo_root)
+    class AuditInstall(Install):
+        @property
+        def fift_include_dirs(self):
+            # Generated smart-contract .fif files live in the matching build tree.
+            return [
+                self.source_dir / "crypto/fift/lib",
+                self.build_dir / "crypto/smartcont",
+                self.source_dir / "crypto/smartcont",
+            ]
+
+    install = AuditInstall(build_dir, repo_root)
     topology_dir.mkdir(parents=True, exist_ok=True)
 
     stop = asyncio.Event()
@@ -205,12 +220,42 @@ PY
   log "tonapi_path=${TONAPI_DIR}"
 }
 
+check_matching_build_artifacts() {
+  local build_dir="$1" rel
+  local required=(
+    validator-engine/validator-engine
+    validator-engine-console/validator-engine-console
+    crypto/create-state
+    crypto/fift
+    lite-client/lite-client
+    dht-server/dht-server
+    utils/generate-random-id
+  )
+  for rel in "${required[@]}"; do
+    [[ -x "${build_dir}/${rel}" ]] || fail "matching build artifact missing: ${build_dir}/${rel}"
+  done
+  [[ -f "${build_dir}/tonlib/libtonlibjson.so" || -f "${build_dir}/tonlib/libtonlibjson.dylib" ]] || fail "matching tonlib shared library missing under ${build_dir}/tonlib"
+  local validator_help
+  validator_help="$("${build_dir}/validator-engine/validator-engine" --help 2>&1 || true)"
+  grep -q -- '--console-ready-fd' <<<"${validator_help}" || fail "validator-engine does not match current tontester: --console-ready-fd absent"
+  [[ -f "${build_dir}/crypto/smartcont/auto/wallet-code.fif" ||
+     -f "${REPO_ROOT}/crypto/smartcont/auto/wallet-code.fif" ]] ||
+    fail "generated smartcont file missing from build or source smartcont/auto directory"
+}
+
+build_matching_binaries() {
+  FNSERVE_BUILD_DIR="${FNSERVE_BUILD_DIR}" \
+    FNSERVE_BUILD_JOBS="${FNSERVE_BUILD_JOBS:-2}" \
+    bash "${SCRIPT_DIR}/build_matching_binaries.sh"
+}
+
 start_topology() {
   is_private_host "${FNSERVE_MASTER_HOST}" || fail "refusing non-local master host ${FNSERVE_MASTER_HOST}"
   local build_dir
   build_dir="$(find_build_dir)" || fail "validator-engine build artifacts missing; expected validator-engine/validator-engine in FNSERVE_BUILD_DIR or common build dirs"
   [[ -d "${REPO_ROOT}/test/tontester/src" ]] || fail "repo-local tontester harness missing"
   [[ -f "${REPO_ROOT}/test/tontester/src/tontester/network.py" ]] || fail "tontester network.py missing"
+  check_matching_build_artifacts "${build_dir}"
   ensure_tonapi
 
   write_harness
@@ -235,8 +280,8 @@ start_topology() {
       log "env_file=${ENV_FILE}"
       cat "${ENV_FILE}"
       printf 'FORMAT FNSERVE_TOPOLOGY_READY\n'
-      printf 'exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/ensure_tonapi.py, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md\n'
-      printf 'exact setup command: FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=%q bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh\n' "${build_dir}"
+      printf 'exact files changed: audit/fnserve_master_01_topology/build_matching_binaries.sh, audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md\n'
+      printf 'exact setup command: FNSERVE_TOPOLOGY_MODE=build-start FNSERVE_BUILD_DIR=%q bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh\n' "${build_dir}"
       printf 'exact plan command: source %q && FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh\n' "${ENV_FILE}"
       printf 'exact generated/located tonapi path: %s\n' "${TONAPI_DIR}"
       printf 'exact variables generated: FNSERVE_CONFIG FNSERVE_MASTER_HOST FNSERVE_MASTER_PORT FNSERVE_MASTER_PUBKEY_TL_HEX FNSERVE_ZERO_STATE_BLOCK FNSERVE_BLOCK_ID FNSERVE_TARGET_PID FNSERVE_VALIDATOR_ENGINE\n'
@@ -275,8 +320,8 @@ extract_or_reuse() {
 plan() {
   cat <<PLAN
 FORMAT FNSERVE_TOPOLOGY_READY
-exact files changed: audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/ensure_tonapi.py, audit/fnserve_master_01_topology/extract_fullnodemaster_env.py, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md
-exact setup command: FNSERVE_TOPOLOGY_MODE=start FNSERVE_BUILD_DIR=<repo-build-dir> bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
+exact files changed: audit/fnserve_master_01_topology/build_matching_binaries.sh, audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh, audit/fnserve_master_01_topology/README.md, audit/CODEX_LAST_STATUS.md
+exact setup command: FNSERVE_TOPOLOGY_MODE=build-start FNSERVE_BUILD_DIR=<repo-build-dir> bash audit/fnserve_master_01_topology/setup_local_fullnodemaster.sh
 exact plan command: source ${ENV_FILE} && FNSERVE_MODE=plan bash audit/run_fnserve_master_01_local.sh
 exact generated/located tonapi path: ${TONAPI_DIR}
 exact variables generated: FNSERVE_CONFIG FNSERVE_MASTER_HOST FNSERVE_MASTER_PORT FNSERVE_MASTER_PUBKEY_TL_HEX FNSERVE_ZERO_STATE_BLOCK FNSERVE_BLOCK_ID FNSERVE_TARGET_PID FNSERVE_VALIDATOR_ENGINE
@@ -289,7 +334,8 @@ print_context
 check_tools
 case "${FNSERVE_TOPOLOGY_MODE}" in
   plan) plan ;;
+  build-start) build_matching_binaries; start_topology ;;
   start) start_topology ;;
   reuse|extract) extract_or_reuse ;;
-  *) fail "unknown FNSERVE_TOPOLOGY_MODE=${FNSERVE_TOPOLOGY_MODE}; expected plan, start, reuse, or extract" ;;
+  *) fail "unknown FNSERVE_TOPOLOGY_MODE=${FNSERVE_TOPOLOGY_MODE}; expected plan, build-start, start, reuse, or extract" ;;
 esac
