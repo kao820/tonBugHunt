@@ -15,6 +15,9 @@ RLDP2_PEER_ID="${RLDP2_PEER_ID:-}"
 RLDP2_KEY_MATERIAL="${RLDP2_KEY_MATERIAL:-}"
 RLDP2_TARGET_PID="${RLDP2_TARGET_PID:-}"
 RLDP2_ALLOW_NON_LOCAL="${RLDP2_ALLOW_NON_LOCAL:-0}"
+RLDP2_TARGET_ADNL_PUBKEY_TL_HEX="${RLDP2_TARGET_ADNL_PUBKEY_TL_HEX:-}"
+RLDP2_SENDER_BUILD_DIR="${RLDP2_SENDER_BUILD_DIR:-$RLDP2_WORKDIR/sender-build}"
+RLDP2_SENDER_BIN="${RLDP2_SENDER_BIN:-$RLDP2_SENDER_BUILD_DIR/rldp2_adnl_sender}"
 RLDP2_SEND_CMD="${RLDP2_SEND_CMD:-}"
 RLDP2_HELPER_BUILD_DIR="${RLDP2_HELPER_BUILD_DIR:-$RLDP2_WORKDIR/helper-build}"
 RLDP2_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -82,6 +85,14 @@ build_helper() {
   log "helper=$RLDP2_HELPER_BUILD_DIR/rldp2_messagepart_generator"
 }
 
+build_sender() {
+  preflight_common
+  cmake -S "$RLDP2_REPO_ROOT/audit/rldp2_inbound_state_01_sender" -B "$RLDP2_SENDER_BUILD_DIR" \
+    -DTON_SOURCE_ROOT="$RLDP2_REPO_ROOT"
+  cmake --build "$RLDP2_SENDER_BUILD_DIR" --target rldp2_adnl_sender -- -j1
+  log "sender=$RLDP2_SENDER_BIN"
+}
+
 require_run_inputs() {
   if ! is_loopback_host && [[ "$RLDP2_ALLOW_NON_LOCAL" != "1" ]]; then
     fail_verdict "BLOCKER_NON_LOCAL_TARGET_REFUSED" 2
@@ -91,6 +102,10 @@ require_run_inputs() {
   [[ -n "$RLDP2_PEER_ID" ]] || fail_verdict "BLOCKER_EMPTY_PEER_ID" 2
   [[ -n "$RLDP2_KEY_MATERIAL" ]] || fail_verdict "BLOCKER_EMPTY_KEY_MATERIAL" 2
   [[ -n "$RLDP2_TARGET_PID" ]] || fail_verdict "BLOCKER_EMPTY_TARGET_PID" 2
+  if [[ -z "$RLDP2_SEND_CMD" && -x "$RLDP2_SENDER_BIN" ]]; then
+    RLDP2_SEND_CMD="$RLDP2_SENDER_BIN"
+  fi
+  [[ -n "$RLDP2_TARGET_ADNL_PUBKEY_TL_HEX" ]] || fail_verdict "BLOCKER_EMPTY_TARGET_ADNL_PUBKEY_TL_HEX" 2
   [[ -n "$RLDP2_SEND_CMD" ]] || fail_verdict "BLOCKER_EMPTY_RLDP2_SEND_CMD" 2
   [[ "$RLDP2_SYMBOL_PAYLOAD_BYTES" -le 1024 ]] || fail_verdict "BLOCKER_PACKET_SIZE_LIMIT" 2
   [[ "$RLDP2_TOTAL_SIZE" -le 7680 ]] || fail_verdict "BLOCKER_TOTAL_SIZE_LIMIT" 2
@@ -141,7 +156,7 @@ import time
 print(int(time.time() * 1000))
 PY
 )
-    if send_out=$(RLDP2_PACKET_FILE="$packet_file" RLDP2_TARGET_HOST="$RLDP2_TARGET_HOST" RLDP2_TARGET_PORT="$RLDP2_TARGET_PORT" RLDP2_TARGET_LOCAL_ID="$RLDP2_TARGET_LOCAL_ID" RLDP2_PEER_ID="$RLDP2_PEER_ID" RLDP2_KEY_MATERIAL="$RLDP2_KEY_MATERIAL" bash -c "$RLDP2_SEND_CMD" 2>&1); then
+    if send_out=$(RLDP2_PACKET_FILE="$packet_file" RLDP2_TARGET_HOST="$RLDP2_TARGET_HOST" RLDP2_TARGET_PORT="$RLDP2_TARGET_PORT" RLDP2_TARGET_LOCAL_ID="$RLDP2_TARGET_LOCAL_ID" RLDP2_TARGET_ADNL_PUBKEY_TL_HEX="$RLDP2_TARGET_ADNL_PUBKEY_TL_HEX" RLDP2_PEER_ID="$RLDP2_PEER_ID" RLDP2_KEY_MATERIAL="$RLDP2_KEY_MATERIAL" bash -c "$RLDP2_SEND_CMD" 2>&1); then
       send_status="ok"; accepted=$((accepted + 1))
     else
       send_status="error"; errors=$((errors + 1))
@@ -184,20 +199,23 @@ candidate_id: TRANSPORT-RLDP2-INBOUND-STATE-01
 mode: plan/no-traffic
 workdir: $RLDP2_WORKDIR
 build_helper_command: RLDP2_INBOUND_MODE=build-helper bash audit/run_rldp2_inbound_state_01_local.sh
-run_command_template: RLDP2_INBOUND_MODE=run RLDP2_TARGET_HOST=127.0.0.1 RLDP2_TARGET_PORT=<port> RLDP2_TARGET_LOCAL_ID=<target-local-id> RLDP2_PEER_ID=<peer-id> RLDP2_KEY_MATERIAL=<local-private-key-material> RLDP2_TARGET_PID=<pid> RLDP2_SEND_CMD='<repo-local-adnl-send-command using \$RLDP2_PACKET_FILE>' bash audit/run_rldp2_inbound_state_01_local.sh
+build_sender_command: RLDP2_INBOUND_MODE=build-sender bash audit/run_rldp2_inbound_state_01_local.sh
+run_command_template: RLDP2_INBOUND_MODE=run RLDP2_TARGET_HOST=127.0.0.1 RLDP2_TARGET_PORT=<port> RLDP2_TARGET_LOCAL_ID=<target-local-id> RLDP2_TARGET_ADNL_PUBKEY_TL_HEX=<target-full-public-key-tl-hex> RLDP2_PEER_ID=ephemeral RLDP2_KEY_MATERIAL=ephemeral RLDP2_TARGET_PID=<pid> bash audit/run_rldp2_inbound_state_01_local.sh
 required_run_inputs:
 - RLDP2_TARGET_HOST must be loopback unless RLDP2_ALLOW_NON_LOCAL=1.
 - RLDP2_TARGET_PORT must identify the private/local target ADNL endpoint.
 - RLDP2_TARGET_LOCAL_ID must be the local id subscribed through RldpIn::add_id.
-- RLDP2_PEER_ID and RLDP2_KEY_MATERIAL must identify the non-trusted local ADNL peer used by the sender command.
-- RLDP2_SEND_CMD must send the binary TL payload from \$RLDP2_PACKET_FILE as an ADNL message from the peer to the target local id.
+- RLDP2_TARGET_ADNL_PUBKEY_TL_HEX must be the target local id full public key TL bytes as hex so the repo-local sender can encrypt an ADNL packet.
+- RLDP2_PEER_ID and RLDP2_KEY_MATERIAL may be set to ephemeral for the repo-local sender, which generates a non-trusted local ADNL identity.
+- RLDP2_SEND_CMD defaults to the repo-local rldp2_adnl_sender binary when it exists; overrides must send the binary TL payload from \$RLDP2_PACKET_FILE as an ADNL message from the peer to the target local id.
 no_traffic_sent: yes
 EOF_PLAN
 }
 
 case "$RLDP2_INBOUND_MODE" in
   plan) plan ;;
-  build-helper) build_helper ;;
+  build-helper) build_helper; build_sender ;;
+  build-sender) build_sender ;;
   run) run_bounded ;;
   *) echo "unknown RLDP2_INBOUND_MODE=$RLDP2_INBOUND_MODE" >&2; exit 2 ;;
 esac

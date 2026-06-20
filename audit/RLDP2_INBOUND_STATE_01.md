@@ -42,6 +42,8 @@ A packet must be delivered as an authenticated ADNL message to a target local id
 - `audit/run_rldp2_inbound_state_01_local.sh`: dry-run-by-default plan/build/run wrapper.
 - `audit/rldp2_inbound_state_01_client/rldp2_messagepart_generator.cpp`: local helper that generates one valid serialized `rldp2_messagePart` payload per invocation.
 - `audit/rldp2_inbound_state_01_client/CMakeLists.txt`: helper build file.
+- `audit/rldp2_inbound_state_01_sender/rldp2_adnl_sender.cpp`: repo-local product-path ADNL sender that reads `RLDP2_PACKET_FILE` and sends it with `Adnl::send_message` to a loopback target by default.
+- `audit/rldp2_inbound_state_01_sender/CMakeLists.txt`: sender build file.
 - `audit/RLDP2_INBOUND_STATE_01.md`: candidate and package status.
 
 ## Commands
@@ -52,10 +54,16 @@ Plan only, no traffic:
 RLDP2_INBOUND_MODE=plan bash audit/run_rldp2_inbound_state_01_local.sh
 ```
 
-Build helper only:
+Build helper and sender only:
 
 ```bash
 RLDP2_INBOUND_MODE=build-helper bash audit/run_rldp2_inbound_state_01_local.sh
+```
+
+Build sender only:
+
+```bash
+RLDP2_INBOUND_MODE=build-sender bash audit/run_rldp2_inbound_state_01_local.sh
 ```
 
 Bounded run template, local/private only:
@@ -65,12 +73,19 @@ RLDP2_INBOUND_MODE=run \
 RLDP2_TARGET_HOST=127.0.0.1 \
 RLDP2_TARGET_PORT=<private-target-adnl-port> \
 RLDP2_TARGET_LOCAL_ID=<target-local-id-subscribed-by-rldp> \
-RLDP2_PEER_ID=<non-trusted-local-peer-id> \
-RLDP2_KEY_MATERIAL=<local-peer-key-material> \
+RLDP2_TARGET_ADNL_PUBKEY_TL_HEX=<target-full-public-key-tl-hex> \
+RLDP2_PEER_ID=ephemeral \
+RLDP2_KEY_MATERIAL=ephemeral \
 RLDP2_TARGET_PID=<target-process-pid> \
-RLDP2_SEND_CMD='<repo-local-adnl-send-command using $RLDP2_PACKET_FILE>' \
 bash audit/run_rldp2_inbound_state_01_local.sh
 ```
+
+
+## Sender resolution
+
+The external `RLDP2_SEND_CMD` placeholder is replaced by a repo-local sender helper when built. The sender reads `RLDP2_PACKET_FILE`, requires `RLDP2_TARGET_HOST`, `RLDP2_TARGET_PORT`, and `RLDP2_TARGET_ADNL_PUBKEY_TL_HEX`, generates an ephemeral non-trusted local Ed25519 ADNL identity, adds the target full public key and UDP address to a local `Adnl` peer table, and sends the serialized `rldp2_messagePart` through `Adnl::send_message`. This is product-path ADNL delivery into the target's `AdnlLocalId::deliver` / `RldpIn::receive_message_part` subscription path, not a direct C++ call into `RldpConnection`.
+
+The sender still requires the target full public key TL hex because ADNL encryption cannot be performed from only the short local id. If the local topology cannot export that full key, the candidate remains `PARKED_DELIVERY_BLOCKED`; if the full key and loopback port are available, run mode can exercise product-path delivery without an external sender command.
 
 ## Safety limits
 
@@ -84,7 +99,7 @@ Defaults:
 - `RLDP2_TOTAL_SIZE=7680`
 - `RLDP2_MAX_RSS_DELTA_BYTES=268435456`
 
-The wrapper refuses non-loopback targets unless `RLDP2_ALLOW_NON_LOCAL=1` is explicitly set, refuses empty target/peer/key/PID/sender variables in run mode, never runs `git clean`, and stores logs/metrics only under the workdir.
+The wrapper refuses non-loopback targets unless `RLDP2_ALLOW_NON_LOCAL=1` is explicitly set, refuses empty target/peer/key/PID variables in run mode, requires `RLDP2_TARGET_ADNL_PUBKEY_TL_HEX`, defaults `RLDP2_SEND_CMD` to the repo-local sender when built, never runs `git clean`, and stores logs/metrics only under the workdir.
 
 ## PASS criteria
 
